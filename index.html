@@ -52,6 +52,8 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <!-- Babel for in-browser JSX transform (demo only) -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
     <!-- Minimal icons via inline SVGs; lucide-react requires bundling, so we embed SVGs where needed. -->
   </head>
   <body class="bg-white text-slate-800">
@@ -72,13 +74,17 @@
             <Container>
               <div className="flex items-center justify-between py-4">
                 <div className="flex items-center gap-3">
-                  {/* Logo placeholder */}
-                  <div className="h-10 w-10 rounded-lg bg-brand-600/10 ring-1 ring-brand-600/20 flex items-center justify-center">
-                    <span className="text-brand-700 font-semibold">DB</span>
-                  </div>
+                  <img
+                    src="logo.jpg"
+                    alt="College Logo"
+                    className="h-12 w-12 rounded-full ring-1 ring-brand-600/20 object-contain bg-white"
+                  />
                   <div>
-                    <p className="text-sm text-slate-500">Dr. B. B. Hegde First Grade College</p>
-                    <h1 className="text-lg font-semibold text-slate-900">Library Walk-In & Walk-Out System</h1>
+                    <h1 className="text-lg font-semibold text-slate-900">Dr.B.B. Hegde First Grade College, Kundapura</h1>
+                    <div className="mt-1 h-px w-full bg-slate-200" />
+                    <p className="mt-1 text-sm text-slate-600">A Unit of Coondapur Education Society(R)</p>
+                    <p className="text-sm text-brand-700">Accredited by NAAC with B++ Grade, Affiliated to Mangalore University, Karnataka</p>
+                    <p className="mt-1 text-sm text-slate-500">Library Walk-In & Walk-Out System</p>
                   </div>
                 </div>
 
@@ -132,110 +138,8 @@
         );
       }
 
-      function ScanSection() {
-        const [lastScan, setLastScan] = useState({ who: '—', when: '—', action: '—' });
 
-        const handleScan = (studentId) => {
-          if (!studentId.trim()) return;
-          
-          const now = new Date();
-          const currentTime = now.toLocaleTimeString();
-          const currentDate = now.toLocaleDateString();
-          
-          // Check if student already has an active session (walked in but not out)
-          const existingRecord = attendanceData.find(record => 
-            record.roll === studentId && record.status === 'In Library'
-          );
-          
-          let action, newRecord;
-          
-          if (existingRecord) {
-            // Student is walking out
-            action = 'Walk-Out';
-            newRecord = {
-              ...existingRecord,
-              outTime: currentTime,
-              status: 'Completed'
-            };
-            
-            // Update the existing record
-            setAttendanceData(prev => 
-              prev.map(record => 
-                record.roll === studentId && record.status === 'In Library' 
-                  ? newRecord 
-                  : record
-              )
-            );
-          } else {
-            // Student is walking in
-            action = 'Walk-In';
-            newRecord = {
-              roll: studentId,
-              name: `Student ${studentId}`, // Placeholder - would come from student database
-              class: 'BCA', // Placeholder - would come from student database
-              date: currentDate,
-              inTime: currentTime,
-              outTime: '—',
-              status: 'In Library'
-            };
-            
-            // Add new record
-            setAttendanceData(prev => [...prev, newRecord]);
-          }
-          
-          setLastScan({
-            who: studentId,
-            when: now.toLocaleString(),
-            action: action
-          });
-        };
-
-        return (
-          <Card title="Barcode Scan" subtitle="Scan student ID to automatically record walk-in or walk-out.">
-            <div className="grid gap-6">
-              <input
-                type="text"
-                placeholder="Scan student ID here..."
-                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-4 text-lg shadow-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10"
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter') {
-                    handleScan(e.target.value);
-                    e.target.value = '';
-                  }
-                }}
-                onChange={(e) => {
-                  // Auto-process when barcode scanner inputs (usually ends with Enter)
-                  if (e.target.value.length > 3 && e.target.value.includes('\n')) {
-                    const studentId = e.target.value.trim();
-                    handleScan(studentId);
-                    e.target.value = '';
-                  }
-                }}
-              />
-
-              <div className="rounded-lg bg-slate-50 p-4">
-                <p className="text-sm text-slate-500">
-                  Last Scanned: <span className="font-medium text-slate-700">{lastScan.who}</span>
-                  <span className="mx-2 text-slate-300">•</span>
-                  <span className={`font-medium ${
-                    lastScan.action === 'Walk-In' 
-                      ? 'text-emerald-600' 
-                      : lastScan.action === 'Walk-Out' 
-                        ? 'text-rose-600' 
-                        : 'text-slate-600'
-                  }`}>
-                    {lastScan.action}
-                  </span>
-                  <span className="mx-2 text-slate-300">•</span>
-                  <span>{lastScan.when}</span>
-                </p>
-              </div>
-            </div>
-          </Card>
-        );
-      }
-
-      function MetricsCard() {
+      function MetricsCard({ attendanceData }) {
         const today = new Date().toLocaleDateString();
         const todayRecords = attendanceData.filter(record => record.date === today);
         const walkIns = todayRecords.filter(record => record.status === 'Completed' || record.status === 'In Library').length;
@@ -306,10 +210,9 @@
         );
       }
 
-      // Empty data array - will be populated by actual scans
-      const [attendanceData, setAttendanceData] = useState([]);
+      // (state moved into Dashboard)
 
-      function DataTable() {
+      function DataTable({ attendanceData }) {
         const [query, setQuery] = useState('');
         const [page, setPage] = useState(1);
         const [pageSize, setPageSize] = useState(10);
@@ -471,20 +374,96 @@
       }
 
       function Dashboard() {
+        const [attendanceData, setAttendanceData] = useState([]);
+        const [lastScan, setLastScan] = useState({ barcode: "—", time: "—", action: "—" });
+        const [socket, setSocket] = useState(null);
+
+        // Initialize Socket.IO connection and handle barcode scans
+        useEffect(() => {
+          const newSocket = io('http://localhost:5050');
+          setSocket(newSocket);
+
+          newSocket.on('connect', () => {
+            console.log('Connected to scanner service');
+          });
+
+          newSocket.on('barcode_scanned', (data) => {
+            console.log('Barcode scanned:', data);
+            handleScan(data.barcode);
+          });
+
+          return () => newSocket.close();
+        }, []);
+
+        const handleScan = (studentId) => {
+          if (!studentId.trim()) return;
+          
+          const now = new Date();
+          const currentTime = now.toLocaleTimeString();
+          const currentDate = now.toLocaleDateString();
+          
+          // Check if student already has an active session (walked in but not out)
+          const existingRecord = attendanceData.find(record => 
+            record.roll === studentId && record.status === 'In Library'
+          );
+          
+          let action, newRecord;
+          
+          if (existingRecord) {
+            // Student is walking out
+            action = 'Walk-Out';
+            newRecord = {
+              ...existingRecord,
+              outTime: currentTime,
+              status: 'Completed'
+            };
+            
+            // Update the existing record
+            setAttendanceData(prev => 
+              prev.map(record => 
+                record.roll === studentId && record.status === 'In Library' 
+                  ? newRecord 
+                  : record
+              )
+            );
+          } else {
+            // Student is walking in
+            action = 'Walk-In';
+            newRecord = {
+              roll: studentId,
+              name: `Student ${studentId}`, // Placeholder - would come from student database
+              class: 'BCA', // Placeholder - would come from student database
+              date: currentDate,
+              inTime: currentTime,
+              outTime: '—',
+              status: 'In Library'
+            };
+            
+            // Add new record
+            setAttendanceData(prev => [...prev, newRecord]);
+          }
+          
+          setLastScan({
+            who: studentId,
+            when: now.toLocaleString(),
+            action: action
+          });
+        };
+
         return (
           <main className="py-8">
             <Container>
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2 space-y-6">
-                  <ScanSection />
+                  {/* Scanner section removed */}
                 </div>
                 <div className="lg:col-span-1 space-y-6">
-                  <MetricsCard />
+                  <MetricsCard attendanceData={attendanceData} />
                 </div>
               </div>
 
               <div className="mt-8">
-                <DataTable />
+                <DataTable attendanceData={attendanceData} />
               </div>
             </Container>
           </main>
