@@ -5,9 +5,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Library Walk-In & Walk-Out System</title>
-  <!-- Tailwind CSS CDN (for demo usage) -->
-  <!-- <script src="https://cdn.tailwindcss.com"></script> -->
+
+  <!-- ✅ Correct Socket.IO client (MUST match Flask-SocketIO v5.x / Engine.IO 4.x) -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+  <!-- ✅ Tailwind CSS (local version) -->
   <script src="{{ url_for('static', filename='tailwind/tailwindcss.js') }}"></script>
+
   <script>
     tailwind.config = {
       theme: {
@@ -49,13 +53,18 @@
       }
     }
   </script>
-  <!-- React + ReactDOM UMD -->
+
+  <!-- ✅ React + ReactDOM -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-  <!-- Babel for in-browser JSX transform (demo only) -->
+
+  <!-- ✅ Babel for in-browser JSX -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- Minimal icons via inline SVGs; lucide-react requires bundling, so we embed SVGs where needed. -->
+
+  <!-- 🚫 REMOVE this line (caused 400 error) -->
+  <!-- <script src="/socket.io/socket.io.js"></script> -->
 </head>
+
 
 <body class="bg-white text-slate-800">
   <div id="root"></div>
@@ -78,7 +87,7 @@
                 <img
                   src="{{ url_for('static', filename='logo.jpg') }}"
                   alt="College Logo"
-                  class="h-12 w-12 rounded-full ring-1 ring-brand-600/20 object-contain bg-white"
+                  className="h-12 w-12 rounded-full ring-1 ring-brand-600/20 object-contain bg-white"
                 />
 
                 <div>
@@ -128,8 +137,8 @@
             <p className="text-2xl font-semibold text-slate-900">{value}</p>
             {trend && (
               <span className={`text-xs px-2 py-0.5 rounded-full ${trend > 0
-                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                  : 'bg-rose-50 text-rose-700 border border-rose-200'
+                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                : 'bg-rose-50 text-rose-700 border border-rose-200'
                 }`}>
                 {trend > 0 ? '+' : ''}{trend}%
               </span>
@@ -255,15 +264,49 @@
       return null;
     }
 
-    function MetricsCard({ attendanceData }) {
+    function MetricsCard({ attendanceData, lastScan }) {
       const today = new Date().toLocaleDateString();
       const todayRecords = attendanceData.filter(record => record.date === today);
       const walkIns = todayRecords.filter(record => record.status === 'Completed' || record.status === 'In Library').length;
       const walkOuts = todayRecords.filter(record => record.status === 'Completed').length;
       const activeInLibrary = todayRecords.filter(record => record.status === 'In Library').length;
 
+      // Resolve last scanned student's name from attendance data if available
+      const lastScanName = React.useMemo(() => {
+        if (!lastScan || !lastScan.barcode || lastScan.barcode === '—') return '—';
+        // Find the most recent record matching the scanned barcode
+        const matching = attendanceData
+          .filter(r => r.roll === lastScan.barcode)
+          .sort((a, b) => `${b.date} ${b.inTime}`.localeCompare(`${a.date} ${a.inTime}`));
+        return matching[0]?.name || '—';
+      }, [attendanceData, lastScan.barcode, lastScan.time]);
+
       return (
         <Card title="Today's Summary" subtitle="Live overview of library activity.">
+          {/* Live Last Scan details */}
+          <div className="mb-4 rounded-lg border border-slate-100 bg-slate-50/40 p-4">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-center">
+              <div className="flex items-center gap-2">
+                <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ring-1 ${lastScan?.action === 'Walk-In' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : lastScan?.action === 'Walk-Out' ? 'bg-sky-50 text-sky-700 ring-sky-200' : 'bg-slate-50 text-slate-700 ring-slate-200'}`}>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M3 7h18" /><path d="M3 12h18" /><path d="M3 17h18" /></svg>
+                  {lastScan?.action || '—'}
+                </span>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Student ID</p>
+                <p className="text-base font-semibold text-slate-900">{lastScan?.barcode || '—'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Name</p>
+                <p className="text-base font-semibold text-slate-900">{lastScanName}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Time</p>
+                <p className="text-base font-semibold text-slate-900">{lastScan?.time || '—'}</p>
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Stat label="Total Walk-ins Today" value={walkIns} />
             <Stat label="Total Walk-outs Today" value={walkOuts} />
@@ -327,6 +370,46 @@
     }
 
     // (state moved into Dashboard)
+
+    function LastScanBar({ lastScan }) {
+      if (!lastScan || !lastScan.barcode || lastScan.barcode === '—') return null;
+
+      const isIn = lastScan.action === 'Walk-In';
+      const isOut = lastScan.action === 'Walk-Out';
+      const bg = isIn
+        ? 'bg-emerald-50 border-emerald-200'
+        : isOut
+          ? 'bg-sky-50 border-sky-200'
+          : 'bg-slate-50 border-slate-200';
+      const badge = isIn
+        ? 'bg-emerald-100 text-emerald-800 ring-emerald-200'
+        : isOut
+          ? 'bg-sky-100 text-sky-800 ring-sky-200'
+          : 'bg-slate-100 text-slate-800 ring-slate-200';
+
+      return (
+        <div className={`w-screen ${bg} border-y`}>
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ring-1 ${badge}`}>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M3 7h18" /><path d="M3 12h18" /><path d="M3 17h18" /></svg>
+                  {lastScan.action || '—'}
+                </span>
+                <div>
+                  <p className="text-xs text-slate-500">Student ID</p>
+                  <p className="text-base font-semibold text-slate-900">{lastScan.barcode}</p>
+                </div>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Time</p>
+                <p className="text-base font-semibold text-slate-900">{lastScan.time || '—'}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     function DataTable({ attendanceData }) {
       const [query, setQuery] = useState('');
@@ -444,8 +527,8 @@
                         <td className="px-4 py-3 text-sm text-slate-700">{row.outTime}</td>
                         <td className="px-4 py-3 text-sm">
                           <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ${row.status === 'In Library'
-                              ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
-                              : 'bg-slate-50 text-slate-700 ring-slate-200'
+                            ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+                            : 'bg-slate-50 text-slate-700 ring-slate-200'
                             }`}>
                             {row.status}
                           </span>
@@ -492,44 +575,40 @@
       const [attendanceData, setAttendanceData] = useState([]);
       const [lastScan, setLastScan] = useState({ barcode: "—", time: "—", action: "—" });
 
-      // Load attendance data from JSON file
+      // Live updates via Socket.IO and initial fetch
       useEffect(() => {
-        const loadData = () => {
-          fetch('./attendance_data.json')
-            .then(response => response.json())
-            .then(data => {
-              setAttendanceData(data.attendance || []);
-              setLastScan(data.last_scan || { barcode: "—", time: "—", action: "—" });
-            })
-            .catch(err => {
-              console.log('Could not load attendance data:', err);
-              // Set empty data if file doesn't exist
-              setAttendanceData([]);
-              setLastScan({ barcode: "—", time: "—", action: "—" });
-            });
+        const loadFromApi = () => {
+          fetch('/api/attendance')
+            .then(r => r.json())
+            .then(data => setAttendanceData(data.attendance || []))
+            .catch(() => setAttendanceData([]));
         };
 
-        // Load data immediately
-        loadData();
+        loadFromApi();
 
-        // Refresh data every 2 seconds
-        const interval = setInterval(loadData, 2000);
+        const socket = io();
+        socket.on('barcode_scanned', ({ barcode, record }) => {
+          setLastScan({ barcode: barcode, time: new Date().toLocaleString(), action: record?.action || '—' });
+          loadFromApi();
+        });
 
-        return () => clearInterval(interval);
+        return () => socket.close();
       }, []);
 
       return (
         <main className="py-8">
           <Container>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2 space-y-6">
-                {/* Empty space - scanner section removed */}
-              </div>
-              <div className="lg:col-span-1 space-y-6">
-                <MetricsCard attendanceData={attendanceData} />
+            <div className="grid grid-cols-1 gap-6">
+              <div className="lg:col-span-3">
+                <MetricsCard attendanceData={attendanceData} lastScan={lastScan} />
               </div>
             </div>
+          </Container>
 
+          {/* Full-width live last scan section */}
+          <LastScanBar lastScan={lastScan} />
+
+          <Container>
             <div className="mt-8">
               <DataTable attendanceData={attendanceData} />
             </div>
