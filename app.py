@@ -7,6 +7,10 @@ from flask import Flask, render_template, jsonify, request
 import json
 from flask_socketio import SocketIO
 
+
+
+
+
 # Flask + SocketIO
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev")
@@ -218,6 +222,6 @@ if __name__ == "__main__":
     # Start scanner automatically
     start_barcode_listener_background()
     # Run Flask-SocketIO server
-    socketio.run(app, host="0.0.0.0", port=5000)
+    socketio.run(app, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)
 
 
