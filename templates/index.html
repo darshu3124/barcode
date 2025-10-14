@@ -9,8 +9,8 @@
   <!-- ✅ Correct Socket.IO client (MUST match Flask-SocketIO v5.x / Engine.IO 4.x) -->
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 
-  <!-- ✅ Tailwind CSS (local version) -->
-  <script src="{{ url_for('static', filename='tailwind/tailwindcss.js') }}"></script>
+  <!-- ✅ Tailwind CSS (dev CDN; replace with build for production) -->
+  <script src="https://cdn.tailwindcss.com"></script>
 
   <script>
     tailwind.config = {
@@ -58,7 +58,7 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 
-  <!-- ✅ Babel for in-browser JSX -->
+  <!-- ✅ Babel for in-browser JSX (dev only) -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <!-- 🚫 REMOVE this line (caused 400 error) -->
@@ -69,7 +69,7 @@
 <body class="bg-white text-slate-800">
   <div id="root"></div>
 
-  <script type="text/babel">
+  <script type="text/babel" data-presets="env,react">
     const { useMemo, useState, useEffect } = React;
 
     function Container({ children }) {
@@ -102,7 +102,13 @@
               <nav className="hidden sm:flex items-center gap-6 text-sm text-slate-600">
                 <span>Welcome, Admin</span>
                 <button className="hover:text-brand-700 transition-colors">Change Password</button>
-                <button className="text-rose-600 hover:text-rose-700 transition-colors">Logout</button>
+                <button
+                  onClick={() => window.location.href = '/logout'}
+                  className="text-rose-600 hover:text-rose-700 transition-colors"
+                >
+                  Logout
+                </button>
+
               </nav>
             </div>
           </Container>
@@ -449,15 +455,20 @@
           title="Attendance Data Records"
           actions={
             <div className="flex items-center gap-2">
-              <button className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+              <button id="btn-excel" className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
                 {/* Excel icon */}
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="m4 4 6 8-6 8" /><path d="M14 4h6v16h-6z" /></svg>
                 Export to Excel
               </button>
-              <button className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+              <button id="btn-pdf" className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
                 {/* PDF icon */}
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12V8z" /><path d="M14 2v6h6" /></svg>
                 Export to PDF
+              </button>
+              <button id="btn-clear" className="inline-flex items-center gap-2 rounded-lg border border-rose-200 bg-white px-3 py-2 text-sm text-rose-700 hover:bg-rose-50">
+                {/* Trash icon */}
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
+                Clear
               </button>
             </div>
           }
@@ -575,9 +586,11 @@
       );
     }
 
-    function Dashboard() {
+    function Dashboard({ setFlash }) {
       const [attendanceData, setAttendanceData] = useState([]);
       const [lastScan, setLastScan] = useState({ barcode: "—", time: "—", action: "—" });
+      const [flashColor, setFlashColor] = useState(false);
+
 
       // Live updates via Socket.IO and initial fetch
       useEffect(() => {
@@ -592,16 +605,102 @@
 
         const socket = io();
         socket.on('barcode_scanned', (payload) => {
-          // payload: { roll_no, student_name, section, action, time }
           const barcode = payload?.roll_no || '—';
           const action = payload?.action || '—';
           const time = payload?.time || new Date().toLocaleString();
-          setLastScan({ barcode, action, time, name: payload?.student_name || 'Student not found', section: payload?.section || '—' });
+
+          setLastScan({
+            barcode,
+            action,
+            time,
+            name: payload?.student_name || 'Student not found',
+            section: payload?.section || '—'
+          });
+
           loadFromApi();
+
+          // ✅ Make Student ID turn green for 2 seconds
+          setFlashColor(true);
+          setTimeout(() => {
+            setFlashColor(false);
+            setLastScan({ barcode: "—", time: "—", action: "—" });
+          }, 2000);
         });
+
+
 
         return () => socket.close();
       }, []);
+
+      useEffect(() => {
+        const excelBtn = document.getElementById('btn-excel');
+        const pdfBtn = document.getElementById('btn-pdf');
+        const clearBtn = document.getElementById('btn-clear');
+
+        const downloadBlob = (blob, filename) => {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+        };
+
+        const onExcel = async () => {
+          try {
+            const res = await fetch('/export/excel');
+            if (!res.ok) throw new Error('Export failed');
+            const blob = await res.blob();
+            downloadBlob(blob, 'attendance.xlsx');
+            setFlash('Excel exported successfully');
+            setTimeout(() => setFlash(''), 2500);
+          } catch (e) {
+            setFlash('Failed to export Excel');
+            setTimeout(() => setFlash(''), 2500);
+          }
+        };
+
+        const onPdf = async () => {
+          try {
+            const res = await fetch('/export/pdf');
+            if (!res.ok) throw new Error('Export failed');
+            const blob = await res.blob();
+            downloadBlob(blob, 'attendance.pdf');
+            setFlash('PDF exported successfully');
+            setTimeout(() => setFlash(''), 2500);
+          } catch (e) {
+            setFlash('Failed to export PDF');
+            setTimeout(() => setFlash(''), 2500);
+          }
+        };
+
+        const onClear = async () => {
+          try {
+            const res = await fetch('/clear_data', { method: 'POST' });
+            const data = await res.json();
+            if (!data?.success) throw new Error('Clear failed');
+            setAttendanceData([]);
+            setLastScan({ barcode: '—', time: '—', action: '—' });
+            setFlash('All data cleared');
+            setTimeout(() => setFlash(''), 2500);
+          } catch (e) {
+            setFlash('Failed to clear data');
+            setTimeout(() => setFlash(''), 2500);
+          }
+        };
+
+        excelBtn?.addEventListener('click', onExcel);
+        pdfBtn?.addEventListener('click', onPdf);
+        clearBtn?.addEventListener('click', onClear);
+
+        return () => {
+          excelBtn?.removeEventListener('click', onExcel);
+          pdfBtn?.removeEventListener('click', onPdf);
+          clearBtn?.removeEventListener('click', onClear);
+        };
+      }, [setFlash]);
 
       return (
         <main className="py-8">
@@ -614,7 +713,8 @@
           </Container>
 
           {/* Full-width live last scan section */}
-          <LastScanBar lastScan={lastScan} />
+          {/* <LastScanBar lastScan={lastScan} /> */}
+
 
           <Container>
             <div className="mt-8">
@@ -626,10 +726,23 @@
     }
 
     function App() {
+      // <-- flash state is lifted here and passed down to Dashboard
+      const [flash, setFlash] = useState("");
+
       return (
         <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
           <Header />
-          <Dashboard />
+          {/* flash banner (top-center) */}
+          {flash && (
+            <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50">
+              <div className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 text-white px-4 py-2 text-sm shadow-lg ring-1 ring-emerald-700/30">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><path d="M22 4 12 14.01l-3-3" /></svg>
+                {flash}
+              </div>
+            </div>
+          )}
+          {/* pass setFlash down so Dashboard and its effects can call it */}
+          <Dashboard setFlash={setFlash} />
         </div>
       );
     }

@@ -160,20 +160,42 @@ def main_listener(callback):
         t.start()
         threads.append(t)
 
-    # intercept print() output to capture barcodes
+    # ✅ Intercept print() output to capture barcodes
     old_print = print
 
     def custom_print(*args, **kwargs):
-        msg = " ".join(str(a) for a in args)
-        if active_scanner in msg and ":" in msg:
-            barcode_value = msg.split(":", 1)[1].strip()
-            callback(barcode_value)
+        msg = " ".join(str(a) for a in args).strip()
+
+        # Always show debug text in console
         old_print(*args, **kwargs)
 
+        # ✅ Only process lines that clearly look like scanner data
+        if not msg.startswith(active_scanner + ":"):
+            return
+
+        # Extract the barcode value (text after the colon)
+        barcode_value = msg.split(":", 1)[1].strip()
+
+        # 🚫 Skip lines that are not valid barcodes
+        if (
+            not barcode_value
+            or "endpoint" in barcode_value.lower()
+            or "device" in barcode_value.lower()
+            or "error" in barcode_value.lower()
+        ):
+            return
+
+        # ✅ Forward only proper student IDs to Flask
+        if len(barcode_value) >= 3:  # or use .isdigit() if your barcodes are numeric
+            callback(barcode_value)
+
+    # Replace print globally
     globals()["print"] = custom_print
 
+    # Keep thread alive
     while not stop_flag:
         time.sleep(0.5)
+
 
 
 if __name__ == "__main__":
