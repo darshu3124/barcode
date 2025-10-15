@@ -436,13 +436,12 @@ LOGIN_TEMPLATE = """
 """
 
 
-
 if __name__ == "__main__":
     _load_students()
     init_db()
     # Start scanner automatically
     start_barcode_listener_background()
-    # Run Flask-SocketIO server
-    socketio.run(app, host="0.0.0.0", port=5000)
+    # Run Flask-SocketIO server on a free port
+    socketio.run(app, host="0.0.0.0", port=5001)
 
 

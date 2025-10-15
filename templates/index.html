@@ -10,7 +10,9 @@
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 
   <!-- ✅ Tailwind CSS (dev CDN; replace with build for production) -->
-  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- <script src="https://cdn.tailwindcss.com"></script> -->
+  <script src="{{ url_for('static', filename='tailwind/tailwindcss.js') }}"></script>
+
 
   <script>
     tailwind.config = {
