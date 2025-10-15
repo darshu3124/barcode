@@ -621,12 +621,12 @@
 
           loadFromApi();
 
-          // ✅ Make Student ID turn green for 2 seconds
+          // ✅ Keep summary visible for 3 seconds
           setFlashColor(true);
           setTimeout(() => {
             setFlashColor(false);
             setLastScan({ barcode: "—", time: "—", action: "—" });
-          }, 2000);
+          }, 3000);
         });
 
 

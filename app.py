@@ -32,29 +32,61 @@ DB_PATH = os.path.join(BASE_DIR, "attendance.db")
 
 # Load student JSONs at startup and merge
 all_students = {}
+
+def _normalize_student(raw: dict) -> dict:
+    """Return a consistent structure: {name, section, class?}.
+    Supports keys like: name, student_name, fullName, studentName, section, class, dept.
+    """
+    name = (
+        raw.get("name")
+        or raw.get("student_name")
+        or raw.get("fullName")
+        or raw.get("studentName")
+        or ""
+    )
+    section = raw.get("section") or raw.get("class") or raw.get("dept") or ""
+    # Per requirement, treat JSON 'section' as our logical 'class'
+    clazz = raw.get("section") or raw.get("class") or raw.get("dept") or "—"
+    return {"name": name, "section": section, "class": clazz}
+
+
 def _load_students():
+    """Load ALL .json files under BASE_DIR/student_data (and legacy top-level fallbacks)."""
     global all_students
     all_students = {}
-    candidates = [
-        os.path.join(BASE_DIR, "c2f1a953-67a8-4504-8f16-7cb9a8dc6ed2.json"),
-        os.path.join(BASE_DIR, "3a4c0fa1-1768-4eb9-826e-0d8a953dc60f.json"),
-    ]
+
+    candidates = []
+    student_dir = os.path.join(BASE_DIR, "student_data")
+    if os.path.isdir(student_dir):
+        for fname in os.listdir(student_dir):
+            if fname.lower().endswith(".json"):
+                candidates.append(os.path.join(student_dir, fname))
+
+    # Legacy fallback locations (if any remain)
+    for legacy in ("final_year.json", "second_year.json"):
+        legacy_path = os.path.join(BASE_DIR, legacy)
+        if os.path.exists(legacy_path):
+            candidates.append(legacy_path)
+
     for path in candidates:
         try:
-            if not os.path.exists(path):
-                continue
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+
             # Accept either {roll: {...}} or {"students": [{roll:..., name:...}]}
             if isinstance(data, dict) and "students" in data and isinstance(data["students"], list):
                 for s in data["students"]:
                     roll = str(s.get("roll") or s.get("roll_no") or s.get("id") or "").strip()
                     if not roll:
                         continue
-                    all_students[roll.upper()] = s
+                    all_students[roll.upper()] = _normalize_student(s)
             elif isinstance(data, dict):
                 for k, v in data.items():
-                    all_students[str(k).upper()] = v
+                    roll = str(k).strip()
+                    if not roll:
+                        continue
+                    v = v if isinstance(v, dict) else {}
+                    all_students[roll.upper()] = _normalize_student(v)
         except Exception as e:
             print(f"Failed to load students from {path}: {e}")
 
@@ -118,16 +150,18 @@ def determine_in_out(conn: sqlite3.Connection, barcode: str, student_name: str |
         }
 
     # Walk-In
+    # Per requirement: JSON 'section' should be stored in DB 'class' column
     cur.execute(
         "INSERT INTO attendance (barcode, name, section, class, date, in_time, status) VALUES (?,?,?,?,?,?,?)",
-        (barcode, student_name or f"Student {barcode}", section or "—", "BCA", date_str, time_str, "In Library"),
+        (barcode, student_name or f"Student {barcode}", section or "—", (section or "—"), date_str, time_str, "In Library"),
     )
     conn.commit()
     return {
         "roll": barcode,
         "barcode": barcode,
         "name": student_name or f"Student {barcode}",
-        "class": "BCA",
+        # Expose class to clients as the same 'section' value
+        "class": section or "—",
         "section": section or "—",
         "date": date_str,
         "inTime": time_str,
@@ -322,8 +356,8 @@ def on_barcode(barcode_value: str):
         return
     with sqlite3.connect(DB_PATH) as conn:
         student = all_students.get(barcode_value.upper()) or {}
-        student_name = student.get("name") or student.get("student_name") or student.get("fullName")
-        section = student.get("section") or student.get("class") or student.get("dept")
+        student_name = (student.get("name") or "").strip() or None
+        section = (student.get("section") or "").strip() or None
         record = determine_in_out(conn, barcode_value, student_name, section)
     payload = {
         "roll_no": barcode_value,
