@@ -1,0 +1,3 @@
+[submodule "barcode"]
+	path = barcode
+	url = https://github.com/darshu3124/barcode.git
