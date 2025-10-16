@@ -272,7 +272,7 @@ def api_start_scanner():
 
 # --- Admin Login ---
 ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "1234"
+ADMIN_PASSWORD = "1"
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -577,8 +577,8 @@ def export_pdf():
         }), 500
 
 
-if __name__ == "__main__":
-    _load_students()
-    init_db()
-    start_barcode_listener_background()
-    socketio.run(app, host="0.0.0.0", port=5001)
+
+_load_students()
+init_db()
+start_barcode_listener_background()
+socketio.run(app, host="0.0.0.0", port=5001)
