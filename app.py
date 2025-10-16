@@ -343,113 +343,65 @@ def export_excel():
     # Try to generate a real XLSX; if openpyxl is missing, fall back to CSV
     try:
         from openpyxl import Workbook
-        from openpyxl.styles import Font, Alignment, Side, Border
+        from openpyxl.styles import Font, Alignment
         import io
 
         wb = Workbook()
         ws = wb.active
         ws.title = "Attendance"
 
-        # Small info box with selected class/department
-        department_label = (request.args.get("department") or "").strip()
-        display_class = department_label if department_label and department_label.lower() != "all" else "All Classes"
-        ws.merge_cells(start_row=1, start_column=1, end_row=2, end_column=3)
-        ws.cell(row=1, column=1, value=f"Class: {display_class}")
-        ws.cell(row=1, column=1).alignment = Alignment(horizontal="center", vertical="center")
-        ws.cell(row=1, column=1).font = Font(bold=True)
-        box_border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
-        for r in range(1, 3):
-            for c in range(1, 4):
-                ws.cell(row=r, column=c).border = box_border
+        # Detect filters
+        department = (request.args.get("department") or "").strip()
+        start_date = (request.args.get("startDate") or "").strip()
+        end_date = (request.args.get("endDate") or "").strip()
+        is_single_class = bool(department and department.lower() != "all")
+        is_single_date = bool(start_date and start_date == end_date)
 
-        # Blank row and then headers (Class column removed)
-        headers = [
-            "Roll", "Name", "Date", "Walk-In Time", "Walk-Out Time", "Status"
-        ]
-        ws.append([])
+        # Build headers conditionally
+        headers = ["Roll", "Name"]
+        if not is_single_class:
+            headers.append("Class")
+        if not is_single_date:
+            headers.append("Date")
+        headers.extend(["Walk-In Time", "Walk-Out Time", "Status"])
+
+        # Standalone info box above the header (merged single cell with border and wrapping)
+        info_parts = []
+        if is_single_class:
+            info_parts.append(f"Class: {department}")
+        if is_single_date:
+            info_parts.append(f"Date: {start_date}")
+        info_text = "\n".join(info_parts)
+        if info_text:
+            total_cols = len(headers)
+            ws.append([info_text])
+            r = ws.max_row
+            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=total_cols)
+            try:
+                from openpyxl.styles import Border, Side
+                thin = Side(style="thin")
+                box_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+            except Exception:
+                box_border = None
+            cell = ws.cell(row=r, column=1)
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            if box_border:
+                cell.border = box_border
+            longest = max((len(p) for p in info_parts), default=0)
+            approx_lines = max(1, len(info_parts) + longest // 40)
+            ws.row_dimensions[r].height = 18 * approx_lines
+
         ws.append(headers)
         bold = Font(bold=True)
-        header_row = 4
-        for idx in range(1, len(headers) + 1):
+        header_row = ws.max_row
+        total_cols = len(headers)
+        for idx in range(1, total_cols + 1):
             ws.cell(row=header_row, column=idx).font = bold
 
-        def fetch_rows_with_filters(cur):
-            clauses = []
-            params = []
-            department = (request.args.get("department") or "").strip()
-            start_date = (request.args.get("startDate") or "").strip()
-            end_date = (request.args.get("endDate") or "").strip()
-
-            if department and department.lower() != "all":
-                clauses.append("(LOWER(class) LIKE ? OR LOWER(section) LIKE ?)")
-                like = f"%{department.lower()}%"
-                params.extend([like, like])
-            if start_date:
-                clauses.append("date >= ?")
-                params.append(start_date)
-            if end_date:
-                clauses.append("date <= ?")
-                params.append(end_date)
-
-            where_sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-            sql = (
-                "SELECT barcode, name, section, class, date, in_time, out_time, status "
-                "FROM attendance" + where_sql + " ORDER BY id ASC"
-            )
-            cur.execute(sql, params)
-            return cur.fetchall()
-
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
-            rows = fetch_rows_with_filters(cur)
-            for r in rows:
-                # Exclude Class column in exported table
-                ws.append([
-                    r[0] or "",
-                    r[1] or "",
-                    r[4] or "",
-                    r[5] or "",
-                    (r[6] or "—"),
-                    r[7] or "",
-                ])
-
-        # Formatting: freeze header, wrap, auto-width (skip merged title box)
-        ws.freeze_panes = "A5"  # data starts at row 5
-        max_row = ws.max_row
-        max_col = 6  # number of table columns
-        for col_cells in ws.iter_cols(min_row=4, max_row=max_row, min_col=1, max_col=max_col):
-            max_len = 0
-            first_cell = col_cells[0]
-            col_letter = first_cell.column_letter
-            for cell in col_cells:
-                cell.alignment = Alignment(wrap_text=True, vertical="top")
-                value = "" if cell.value is None else str(cell.value)
-                if len(value) > max_len:
-                    max_len = len(value)
-            ws.column_dimensions[col_letter].width = max(10, min(45, max_len + 2))
-
-        bio = io.BytesIO()
-        wb.save(bio)
-        bio.seek(0)
-        return send_file(
-            bio,
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            as_attachment=True,
-            download_name="attendance.xlsx",
-        )
-    except Exception:
-        import io, csv
-        output = io.StringIO()
-        writer = csv.writer(output)
-        # Info line and headers (Class column removed)
-        department_label = (request.args.get("department") or "").strip()
-        display_class = department_label if department_label and department_label.lower() != "all" else "All Classes"
-        writer.writerow([f"Class: {display_class}"])
-        writer.writerow([])
-        writer.writerow(["Roll", "Name", "Date", "Walk-In Time", "Walk-Out Time", "Status"])
-        with sqlite3.connect(DB_PATH) as conn:
-            cur = conn.cursor()
-            # Reuse the same filtering logic as above
+            # Apply optional filters from query string
             clauses = []
             params = []
             department = (request.args.get("department") or "").strip()
@@ -474,15 +426,112 @@ def export_excel():
             )
             cur.execute(sql, params)
             for r in cur.fetchall():
-                # Exclude Class column
-                writer.writerow([
+                row = [
                     r[0] or "",
                     r[1] or "",
-                    r[4] or "",
+                ]
+                if not is_single_class:
+                    row.append(r[3] or "")
+                if not is_single_date:
+                    row.append(r[4] or "")
+                row.extend([
                     r[5] or "",
                     (r[6] or "—"),
                     r[7] or "",
                 ])
+                ws.append(row)
+
+        # Formatting: freeze header, wrap, auto-width based on header+data only
+        from openpyxl.utils import get_column_letter
+        ws.freeze_panes = f"A{header_row + 1}"
+        last_row = ws.max_row
+        for col_idx in range(1, total_cols + 1):
+            max_len = 0
+            for row in ws.iter_rows(min_row=header_row, max_row=last_row, min_col=col_idx, max_col=col_idx):
+                cell = row[0]
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+                value = "" if cell.value is None else str(cell.value)
+                if len(value) > max_len:
+                    max_len = len(value)
+            width = max(12, min(60, int(max_len * 1.2)))
+            ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+        bio = io.BytesIO()
+        wb.save(bio)
+        data_bytes = bio.getvalue()
+        # Safety check: XLSX should be a ZIP file starting with 'PK' signature
+        if not data_bytes or not data_bytes.startswith(b"PK"):
+            raise RuntimeError("Generated XLSX failed integrity check; falling back to CSV")
+        bio.seek(0)
+        return send_file(
+            bio,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name="attendance.xlsx",
+        )
+    except Exception:
+        import io, csv
+        output = io.StringIO()
+        writer = csv.writer(output)
+        department = (request.args.get("department") or "").strip()
+        start_date = (request.args.get("startDate") or "").strip()
+        end_date = (request.args.get("endDate") or "").strip()
+        is_single_class = bool(department and department.lower() != "all")
+        is_single_date = bool(start_date and start_date == end_date)
+
+        if is_single_class:
+            writer.writerow([f"Class: {department}"])
+        if is_single_date:
+            writer.writerow([f"Date: {start_date}"])
+
+        headers = ["Roll", "Name"]
+        if not is_single_class:
+            headers.append("Class")
+        if not is_single_date:
+            headers.append("Date")
+        headers.extend(["Walk-In Time", "Walk-Out Time", "Status"])
+        writer.writerow(headers)
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            # Apply optional filters from query string
+            clauses = []
+            params = []
+            department = (request.args.get("department") or "").strip()
+            start_date = (request.args.get("startDate") or "").strip()
+            end_date = (request.args.get("endDate") or "").strip()
+
+            if department and department.lower() != "all":
+                clauses.append("(LOWER(class) LIKE ? OR LOWER(section) LIKE ?)")
+                like = f"%{department.lower()}%"
+                params.extend([like, like])
+            if start_date:
+                clauses.append("date >= ?")
+                params.append(start_date)
+            if end_date:
+                clauses.append("date <= ?")
+                params.append(end_date)
+
+            where_sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+            sql = (
+                "SELECT barcode, name, section, class, date, in_time, out_time, status FROM attendance"
+                + where_sql + " ORDER BY id ASC"
+            )
+            cur.execute(sql, params)
+            for r in cur.fetchall():
+                row = [
+                    r[0] or "",
+                    r[1] or "",
+                ]
+                if not is_single_class:
+                    row.append(r[3] or "")
+                if not is_single_date:
+                    row.append(r[4] or "")
+                row.extend([
+                    r[5] or "",
+                    (r[6] or "—"),
+                    r[7] or "",
+                ])
+                writer.writerow(row)
         data = output.getvalue().encode("utf-8-sig")
         mem = io.BytesIO(data)
         mem.seek(0)
@@ -496,85 +545,208 @@ def export_excel():
 
 @app.get("/export/pdf")
 def export_pdf():
-    # Use fpdf for portability
     try:
-        from fpdf import FPDF
-        import io
-
-        class PDF(FPDF):
-            pass
-
-        pdf = PDF(orientation='P', unit='mm', format='A4')
-        pdf.set_auto_page_break(auto=True, margin=15)
-        pdf.add_page()
-
-        pdf.set_font('Helvetica', 'B', 14)
-        pdf.cell(0, 10, 'Library Attendance Report', ln=1)
-
-        # Info box with selected class/department
-        department_label = (request.args.get("department") or "").strip()
-        display_class = department_label if department_label and department_label.lower() != "all" else "All Classes"
-        x, y = pdf.get_x(), pdf.get_y()
-        pdf.set_font('Helvetica', '', 11)
-        pdf.cell(60, 8, f'Class: {display_class}', border=1, ln=1)
-        pdf.ln(2)
-
-        # Table header (Class removed)
-        headers = ["Roll", "Name", "Date", "In", "Out", "Status"]
-        col_widths = [25, 60, 25, 20, 20, 25]
-        pdf.set_font('Helvetica', 'B', 10)
-        for h, w in zip(headers, col_widths):
-            pdf.cell(w, 7, h, border=1)
-        pdf.ln()
-
-        # Rows
-        pdf.set_font('Helvetica', '', 10)
-        with sqlite3.connect(DB_PATH) as conn:
-            cur = conn.cursor()
-            clauses = []
-            params = []
-            department = (request.args.get("department") or "").strip()
-            start_date = (request.args.get("startDate") or "").strip()
-            end_date = (request.args.get("endDate") or "").strip()
-            if department and department.lower() != "all":
-                clauses.append("(LOWER(class) LIKE ? OR LOWER(section) LIKE ?)")
-                like = f"%{department.lower()}%"
-                params.extend([like, like])
-            if start_date:
-                clauses.append("date >= ?")
-                params.append(start_date)
-            if end_date:
-                clauses.append("date <= ?")
-                params.append(end_date)
-            where_sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-            sql = (
-                "SELECT barcode, name, section, class, date, in_time, out_time, status FROM attendance"
-                + where_sql + " ORDER BY id ASC"
-            )
-            cur.execute(sql, params)
-            for r in cur.fetchall():
-                cells = [
-                    str(r[0] or ""), str(r[1] or ""),
-                    str(r[4] or ""), str(r[5] or ""), str(r[6] or "—"), str(r[7] or "")
-                ]
-                for text, w in zip(cells, col_widths):
-                    # truncate long text
-                    txt = text if len(text) <= 32 else text[:31] + '…'
-                    pdf.cell(w, 6, txt, border=1)
-                pdf.ln()
-
-        return send_file(
-            io.BytesIO(pdf.output(dest='S').encode('latin-1')),
-            mimetype='application/pdf',
-            as_attachment=True,
-            download_name='attendance.pdf',
-        )
-    except Exception as e:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.units import cm
+    except Exception:
         return jsonify({
             "success": False,
-            "error": f"PDF export failed: {str(e)}",
-            "hint": "Check server logs for details"
-        }), 500
+            "error": "PDF export not configured. Install reportlab or use CSV export.",
+            "hint": "pip install reportlab"
+        }), 501
+
+    import io
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+
+    # Margins
+    left_margin = 1.5*cm
+    right_margin = 1.5*cm
+
+    # Header with logo + college title
+    from reportlab.lib.utils import ImageReader
+    import os as _os
+    logo_path = _os.path.join(BASE_DIR, "static", "logo.jpg")
+
+    def draw_header() -> float:
+        top_y = height - 1.2*cm
+        logo_w = 1.8*cm
+        logo_h = 1.8*cm
+        has_logo = _os.path.exists(logo_path)
+        if has_logo:
+            try:
+                c.drawImage(logo_path, left_margin, top_y - logo_h, width=logo_w, height=logo_h, preserveAspectRatio=True, mask='auto')
+            except Exception:
+                has_logo = False
+        text_x = left_margin + (logo_w if has_logo else 0) + 0.5*cm
+        # Title
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(text_x, top_y - 0.2*cm, "Dr. B. B. Hegde First Grade College, Kundapura")
+        # Subtitle
+        c.setFont("Helvetica", 10)
+        c.drawString(text_x, top_y - 0.2*cm - 0.7*cm, "A Unit of Coondapur Education Society (R)")
+        # underline
+        line_y = top_y - logo_h - 0.25*cm
+        c.setLineWidth(0.5)
+        c.line(left_margin, line_y, width - right_margin, line_y)
+        # Optional report title below
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(left_margin, line_y - 0.9*cm, "Library Attendance Report")
+        return line_y - 1.1*cm
+
+    top_start = draw_header()
+    bottom_margin = 2*cm
+    usable_width = width - left_margin - right_margin
+
+    x0 = left_margin
+    y = top_start
+    row_height = 0.65*cm
+
+    # Detect filters to conditionally show Class/Date and draw info box
+    department = (request.args.get("department") or "").strip()
+    start_date = (request.args.get("startDate") or "").strip()
+    end_date = (request.args.get("endDate") or "").strip()
+    is_single_class = bool(department and department.lower() != "all")
+    is_single_date = bool(start_date and start_date == end_date)
+
+    headers = ["Roll", "Name"]
+    if not is_single_class:
+        headers.append("Class")
+    if not is_single_date:
+        headers.append("Date")
+    headers.extend(["In", "Out", "Status"])
+
+    def draw_row(values, is_header=False):
+        nonlocal y
+        # Draw background for header
+        if is_header:
+            c.setLineWidth(1)
+            c.rect(x0, y - row_height, total_cols_width, row_height, stroke=1, fill=0)
+            c.setFont("Helvetica-Bold", 9)
+        else:
+            c.setLineWidth(0.5)
+            c.rect(x0, y - row_height, total_cols_width, row_height, stroke=1, fill=0)
+            c.setFont("Helvetica", 9)
+
+        # Vertical lines and cell text
+        x = x0
+        for i, (text, cw) in enumerate(zip(values, col_widths)):
+            # Cell box
+            if i > 0:
+                c.line(x, y - row_height, x, y)
+            # Text clipped to cell
+            clip = str(text or "")
+            # Simple clip: reduce until it fits
+            max_chars = int(cw / 5.5)  # heuristic width per char
+            if len(clip) > max_chars:
+                clip = clip[:max_chars-1] + "…"
+            c.drawString(x + 2, y - row_height + 2, clip)
+            x += cw
+
+        y -= row_height
+
+    # Compute column widths now that we know which headers are present
+    if not is_single_class and not is_single_date:
+        col_widths_cm = [3.0, 7.0, 3.5, 3.0, 2.5, 2.5, 3.0]
+    elif is_single_class and not is_single_date:
+        col_widths_cm = [3.0, 8.5, 3.5, 2.5, 2.5, 3.0]  # no Class column
+    elif not is_single_class and is_single_date:
+        col_widths_cm = [3.0, 8.5, 3.5, 2.5, 2.5, 3.0]  # no Date column
+    else:
+        col_widths_cm = [3.0, 10.0, 2.8, 2.8, 3.0]  # no Class, no Date
+    col_widths = [w*cm for w in col_widths_cm]
+    total_cols_width = sum(col_widths)
+    if total_cols_width > usable_width:
+        scale = usable_width / total_cols_width
+        col_widths = [w*scale for w in col_widths]
+        total_cols_width = sum(col_widths)
+
+    # Optional info box (separate bordered rectangle with wrapped text)
+    if is_single_class or is_single_date:
+        info_lines = []
+        if is_single_class:
+            info_lines.append(f"Class: {department}")
+        if is_single_date:
+            info_lines.append(f"Date: {start_date}")
+        info_text = "\n".join(info_lines)
+        # Box geometry
+        box_height = max(1.0*cm, 0.6*cm * len(info_lines) + 0.4*cm)
+        c.setLineWidth(0.8)
+        c.rect(x0, y - box_height, total_cols_width, box_height, stroke=1, fill=0)
+        c.setFont("Helvetica-Bold", 10)
+        text_y = y - 0.35*cm
+        for line in info_lines:
+            c.drawString(x0 + 0.2*cm, text_y, line)
+            text_y -= 0.6*cm
+        y -= (box_height + 0.25*cm)
+
+    # Header row
+    draw_row(headers, is_header=True)
+
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        # Apply optional filters from query string
+        clauses = []
+        params = []
+        department = (request.args.get("department") or "").strip()
+        start_date = (request.args.get("startDate") or "").strip()
+        end_date = (request.args.get("endDate") or "").strip()
+
+        if department and department.lower() != "all":
+            clauses.append("(LOWER(class) LIKE ? OR LOWER(section) LIKE ?)")
+            like = f"%{department.lower()}%"
+            params.extend([like, like])
+        if start_date:
+            clauses.append("date >= ?")
+            params.append(start_date)
+        if end_date:
+            clauses.append("date <= ?")
+            params.append(end_date)
+
+        where_sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        sql = (
+            "SELECT barcode, name, section, class, date, in_time, out_time, status FROM attendance"
+            + where_sql + " ORDER BY id ASC"
+        )
+        cur.execute(sql, params)
+        for r in cur.fetchall():
+            # Build row conditionally (omit repeated Class/Date)
+            row = [
+                str(r[0] or ""), str(r[1] or ""),
+            ]
+            if not is_single_class:
+                row.append(str(r[3] or ""))
+            if not is_single_date:
+                row.append(str(r[4] or ""))
+            row.extend([
+                str(r[5] or ""), str(r[6] or "—"), str(r[7] or "")
+            ])
+            # New page if needed
+            if y - row_height < bottom_margin:
+                c.showPage()
+                c.setFont("Helvetica", 9)
+                # redraw header on each new page
+                new_top = draw_header()
+                y = new_top
+                if is_single_class:
+                    draw_row([f"Class: {department}"] + [""] * (len(headers) - 1))
+                if is_single_date:
+                    draw_row([f"Date: {start_date}"] + [""] * (len(headers) - 1))
+                draw_row(headers, is_header=True)
+            draw_row(row)
+
+    c.showPage()
+    c.save()
+
+    buffer.seek(0)
+    return send_file(
+        buffer,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name="attendance.pdf",
+    )
 
 
 
