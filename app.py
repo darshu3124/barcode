@@ -555,7 +555,7 @@ def export_pdf():
             for r in cur.fetchall():
                 cells = [
                     str(r[0] or ""), str(r[1] or ""),
-                    str(r[4] or ""), str(r[5] or ""), str(r[6] or "-"), str(r[7] or "")
+                    str(r[4] or ""), str(r[5] or ""), str(r[6] or "—"), str(r[7] or "")
                 ]
                 for text, w in zip(cells, col_widths):
                     # truncate long text
