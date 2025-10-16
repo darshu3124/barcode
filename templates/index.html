@@ -441,6 +441,11 @@
       const [pageSize, setPageSize] = useState(10);
       const [filters, setFilters] = useState({ department: 'All', startDate: '', endDate: '' });
 
+      // Expose current filters globally so export handlers can read them
+      useEffect(() => {
+        window.currentFilters = filters;
+      }, [filters]);
+
       const filtered = useMemo(() => {
         return attendanceData.filter((row) => {
           const textMatch = [row.roll, row.name, row.class]
@@ -697,12 +702,23 @@
       URL.revokeObjectURL(url);
     };
 
+    const buildQueryFromFilters = () => {
+      const f = window.currentFilters || {};
+      const params = new URLSearchParams();
+      if (f.department && f.department !== 'All') params.set('department', f.department);
+      if (f.startDate) params.set('startDate', f.startDate);
+      if (f.endDate) params.set('endDate', f.endDate);
+      return params.toString();
+    };
+
     const onExcel = async () => {
       try {
-      const res = await fetch('/export/excel');
+        const qs = buildQueryFromFilters();
+        const url = qs ? `/export/excel?${qs}` : '/export/excel';
+        const res = await fetch(url);
         if (!res.ok) throw new Error('Export failed');
         const blob = await res.blob();
-      downloadBlob(blob, 'attendance.xlsx');
+        downloadBlob(blob, 'attendance.xlsx');
         setFlash('Excel exported successfully');
         setTimeout(() => setFlash(''), 2500);
       } catch {
@@ -713,7 +729,9 @@
 
     const onPdf = async () => {
       try {
-        const res = await fetch('/export/pdf');
+        const qs = buildQueryFromFilters();
+        const url = qs ? `/export/pdf?${qs}` : '/export/pdf';
+        const res = await fetch(url);
         if (!res.ok) throw new Error('Export failed');
         const blob = await res.blob();
         downloadBlob(blob, 'attendance.pdf');
