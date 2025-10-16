@@ -203,6 +203,7 @@ def get_attendance():
             }
             for r in rows
         ]
+      
         return jsonify({"attendance": list(reversed(data))})
 
 
@@ -235,7 +236,8 @@ def on_barcode(barcode_value: str):
         "student_name": record.get("name") if student_name else "Student not found",
         "section": section or "—",
         "action": record.get("action"),
-        "time": record.get("outTime") or record.get("inTime"),
+        # Prefer outTime only if it's a real timestamp; otherwise use inTime
+        "time": (record.get("outTime") if record.get("outTime") not in (None, "", "—") else record.get("inTime")),
     }
     socketio.emit("barcode_scanned", payload)
     emit_summary_update()  # 🔄 emit live summary update
@@ -335,51 +337,96 @@ LOGIN_TEMPLATE = """
 """
 
 
-if __name__ == "__main__":
-    _load_students()
-    init_db()
-    start_barcode_listener_background()
-    socketio.run(app, host="0.0.0.0", port=5001)
-
 # --- Exports ---
 @app.get("/export/excel")
 def export_excel():
-    import io, csv
-    # Build CSV in-memory (Excel opens CSV nicely). We name it .csv for correctness.
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["Roll", "Name", "Section", "Class", "Date", "Walk-In Time", "Walk-Out Time", "Status"])
-    with sqlite3.connect(DB_PATH) as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT barcode, name, section, class, date, in_time, out_time, status FROM attendance ORDER BY id ASC"
+    # Try to generate a real XLSX; if openpyxl is missing, fall back to CSV
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment
+        import io
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Attendance"
+
+        headers = [
+            "Roll", "Name", "Class", "Date", "Walk-In Time", "Walk-Out Time", "Status"
+        ]
+        ws.append(headers)
+        bold = Font(bold=True)
+        for idx in range(1, len(headers) + 1):
+            ws.cell(row=1, column=idx).font = bold
+
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT barcode, name, section, class, date, in_time, out_time, status FROM attendance ORDER BY id ASC"
+            )
+            for r in cur.fetchall():
+                ws.append([
+                    r[0] or "",
+                    r[1] or "",
+                    r[3] or "",
+                    r[4] or "",
+                    r[5] or "",
+                    (r[6] or "—"),
+                    r[7] or "",
+                ])
+
+        # Formatting: freeze header, wrap, auto-width
+        ws.freeze_panes = "A2"
+        for col in ws.columns:
+            max_len = 0
+            col_letter = col[0].column_letter
+            for cell in col:
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+                value = "" if cell.value is None else str(cell.value)
+                max_len = max(max_len, len(value))
+            ws.column_dimensions[col_letter].width = max(10, min(45, max_len + 2))
+
+        bio = io.BytesIO()
+        wb.save(bio)
+        bio.seek(0)
+        return send_file(
+            bio,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name="attendance.xlsx",
         )
-        for r in cur.fetchall():
-            writer.writerow([
-                r[0] or "",
-                r[1] or "",
-                r[2] or "",
-                r[3] or "",
-                r[4] or "",
-                r[5] or "",
-                (r[6] or "—"),
-                r[7] or "",
-            ])
-    # Encode with BOM so Excel recognizes UTF-8
-    data = output.getvalue().encode("utf-8-sig")
-    mem = io.BytesIO(data)
-    mem.seek(0)
-    return send_file(
-        mem,
-        mimetype="text/csv; charset=utf-8",
-        as_attachment=True,
-        download_name="attendance.csv",
-    )
+    except Exception:
+        import io, csv
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Roll", "Name", "Class", "Date", "Walk-In Time", "Walk-Out Time", "Status"])
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT barcode, name, section, class, date, in_time, out_time, status FROM attendance ORDER BY id ASC"
+            )
+            for r in cur.fetchall():
+                writer.writerow([
+                    r[0] or "",
+                    r[1] or "",
+                    r[3] or "",
+                    r[4] or "",
+                    r[5] or "",
+                    (r[6] or "—"),
+                    r[7] or "",
+                ])
+        data = output.getvalue().encode("utf-8-sig")
+        mem = io.BytesIO(data)
+        mem.seek(0)
+        return send_file(
+            mem,
+            mimetype="text/csv; charset=utf-8",
+            as_attachment=True,
+            download_name="attendance.csv",
+        )
 
 
 @app.get("/export/pdf")
 def export_pdf():
-    # Optional dependency: reportlab
     try:
         from reportlab.lib.pagesizes import A4
         from reportlab.pdfgen import canvas
@@ -399,11 +446,61 @@ def export_pdf():
     c.setFont("Helvetica-Bold", 14)
     c.drawString(2*cm, height - 2*cm, "Library Attendance Report")
     c.setFont("Helvetica", 9)
-    y = height - 3*cm
 
-    headers = ["Roll", "Name", "Section", "Class", "Date", "In", "Out", "Status"]
-    c.drawString(2*cm, y, " | ".join(headers))
-    y -= 0.6*cm
+    # Table layout (Section removed)
+    left_margin = 1.5*cm
+    right_margin = 1.5*cm
+    top_start = height - 3*cm
+    bottom_margin = 2*cm
+    usable_width = width - left_margin - right_margin
+    # Column widths in cm (sum should be <= usable_width)
+    col_widths_cm = [3.0, 7.0, 3.5, 3.0, 2.5, 2.5, 3.0]
+    # Convert to points
+    col_widths = [w*cm for w in col_widths_cm]
+    total_cols_width = sum(col_widths)
+    # If total wider than page, scale down proportionally
+    if total_cols_width > usable_width:
+        scale = usable_width / total_cols_width
+        col_widths = [w*scale for w in col_widths]
+        total_cols_width = sum(col_widths)
+
+    x0 = left_margin
+    y = top_start
+    row_height = 0.65*cm
+
+    headers = ["Roll", "Name", "Class", "Date", "In", "Out", "Status"]
+
+    def draw_row(values, is_header=False):
+        nonlocal y
+        # Draw background for header
+        if is_header:
+            c.setLineWidth(1)
+            c.rect(x0, y - row_height, total_cols_width, row_height, stroke=1, fill=0)
+            c.setFont("Helvetica-Bold", 9)
+        else:
+            c.setLineWidth(0.5)
+            c.rect(x0, y - row_height, total_cols_width, row_height, stroke=1, fill=0)
+            c.setFont("Helvetica", 9)
+
+        # Vertical lines and cell text
+        x = x0
+        for i, (text, cw) in enumerate(zip(values, col_widths)):
+            # Cell box
+            if i > 0:
+                c.line(x, y - row_height, x, y)
+            # Text clipped to cell
+            clip = str(text or "")
+            # Simple clip: reduce until it fits
+            max_chars = int(cw / 5.5)  # heuristic width per char
+            if len(clip) > max_chars:
+                clip = clip[:max_chars-1] + "…"
+            c.drawString(x + 2, y - row_height + 2, clip)
+            x += cw
+
+        y -= row_height
+
+    # Header row
+    draw_row(headers, is_header=True)
 
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -411,16 +508,18 @@ def export_pdf():
             "SELECT barcode, name, section, class, date, in_time, out_time, status FROM attendance ORDER BY id ASC"
         )
         for r in cur.fetchall():
+            # omit r[2] Section
             row = [
-                str(r[0] or ""), str(r[1] or ""), str(r[2] or ""), str(r[3] or ""),
+                str(r[0] or ""), str(r[1] or ""), str(r[3] or ""),
                 str(r[4] or ""), str(r[5] or ""), str(r[6] or "—"), str(r[7] or "")
             ]
-            c.drawString(2*cm, y, " | ".join(row)[:110])
-            y -= 0.5*cm
-            if y < 2*cm:
+            # New page if needed
+            if y - row_height < bottom_margin:
                 c.showPage()
                 c.setFont("Helvetica", 9)
-                y = height - 2*cm
+                y = top_start
+                draw_row(headers, is_header=True)
+            draw_row(row)
 
     c.showPage()
     c.save()
@@ -432,3 +531,10 @@ def export_pdf():
         as_attachment=True,
         download_name="attendance.pdf",
     )
+
+
+if __name__ == "__main__":
+    _load_students()
+    init_db()
+    start_barcode_listener_background()
+    socketio.run(app, host="0.0.0.0", port=5001)
