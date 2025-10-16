@@ -343,46 +343,89 @@ def export_excel():
     # Try to generate a real XLSX; if openpyxl is missing, fall back to CSV
     try:
         from openpyxl import Workbook
-        from openpyxl.styles import Font, Alignment
+        from openpyxl.styles import Font, Alignment, Side, Border
         import io
 
         wb = Workbook()
         ws = wb.active
         ws.title = "Attendance"
 
+        # Small info box with selected class/department
+        department_label = (request.args.get("department") or "").strip()
+        display_class = department_label if department_label and department_label.lower() != "all" else "All Classes"
+        ws.merge_cells(start_row=1, start_column=1, end_row=2, end_column=3)
+        ws.cell(row=1, column=1, value=f"Class: {display_class}")
+        ws.cell(row=1, column=1).alignment = Alignment(horizontal="center", vertical="center")
+        ws.cell(row=1, column=1).font = Font(bold=True)
+        box_border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
+        for r in range(1, 3):
+            for c in range(1, 4):
+                ws.cell(row=r, column=c).border = box_border
+
+        # Blank row and then headers (Class column removed)
         headers = [
-            "Roll", "Name", "Class", "Date", "Walk-In Time", "Walk-Out Time", "Status"
+            "Roll", "Name", "Date", "Walk-In Time", "Walk-Out Time", "Status"
         ]
+        ws.append([])
         ws.append(headers)
         bold = Font(bold=True)
+        header_row = 4
         for idx in range(1, len(headers) + 1):
-            ws.cell(row=1, column=idx).font = bold
+            ws.cell(row=header_row, column=idx).font = bold
+
+        def fetch_rows_with_filters(cur):
+            clauses = []
+            params = []
+            department = (request.args.get("department") or "").strip()
+            start_date = (request.args.get("startDate") or "").strip()
+            end_date = (request.args.get("endDate") or "").strip()
+
+            if department and department.lower() != "all":
+                clauses.append("(LOWER(class) LIKE ? OR LOWER(section) LIKE ?)")
+                like = f"%{department.lower()}%"
+                params.extend([like, like])
+            if start_date:
+                clauses.append("date >= ?")
+                params.append(start_date)
+            if end_date:
+                clauses.append("date <= ?")
+                params.append(end_date)
+
+            where_sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+            sql = (
+                "SELECT barcode, name, section, class, date, in_time, out_time, status "
+                "FROM attendance" + where_sql + " ORDER BY id ASC"
+            )
+            cur.execute(sql, params)
+            return cur.fetchall()
 
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
-            cur.execute(
-                "SELECT barcode, name, section, class, date, in_time, out_time, status FROM attendance ORDER BY id ASC"
-            )
-            for r in cur.fetchall():
+            rows = fetch_rows_with_filters(cur)
+            for r in rows:
+                # Exclude Class column in exported table
                 ws.append([
                     r[0] or "",
                     r[1] or "",
-                    r[3] or "",
                     r[4] or "",
                     r[5] or "",
                     (r[6] or "—"),
                     r[7] or "",
                 ])
 
-        # Formatting: freeze header, wrap, auto-width
-        ws.freeze_panes = "A2"
-        for col in ws.columns:
+        # Formatting: freeze header, wrap, auto-width (skip merged title box)
+        ws.freeze_panes = "A5"  # data starts at row 5
+        max_row = ws.max_row
+        max_col = 6  # number of table columns
+        for col_cells in ws.iter_cols(min_row=4, max_row=max_row, min_col=1, max_col=max_col):
             max_len = 0
-            col_letter = col[0].column_letter
-            for cell in col:
+            first_cell = col_cells[0]
+            col_letter = first_cell.column_letter
+            for cell in col_cells:
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
                 value = "" if cell.value is None else str(cell.value)
-                max_len = max(max_len, len(value))
+                if len(value) > max_len:
+                    max_len = len(value)
             ws.column_dimensions[col_letter].width = max(10, min(45, max_len + 2))
 
         bio = io.BytesIO()
@@ -398,17 +441,43 @@ def export_excel():
         import io, csv
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(["Roll", "Name", "Class", "Date", "Walk-In Time", "Walk-Out Time", "Status"])
+        # Info line and headers (Class column removed)
+        department_label = (request.args.get("department") or "").strip()
+        display_class = department_label if department_label and department_label.lower() != "all" else "All Classes"
+        writer.writerow([f"Class: {display_class}"])
+        writer.writerow([])
+        writer.writerow(["Roll", "Name", "Date", "Walk-In Time", "Walk-Out Time", "Status"])
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
-            cur.execute(
-                "SELECT barcode, name, section, class, date, in_time, out_time, status FROM attendance ORDER BY id ASC"
+            # Reuse the same filtering logic as above
+            clauses = []
+            params = []
+            department = (request.args.get("department") or "").strip()
+            start_date = (request.args.get("startDate") or "").strip()
+            end_date = (request.args.get("endDate") or "").strip()
+
+            if department and department.lower() != "all":
+                clauses.append("(LOWER(class) LIKE ? OR LOWER(section) LIKE ?)")
+                like = f"%{department.lower()}%"
+                params.extend([like, like])
+            if start_date:
+                clauses.append("date >= ?")
+                params.append(start_date)
+            if end_date:
+                clauses.append("date <= ?")
+                params.append(end_date)
+
+            where_sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+            sql = (
+                "SELECT barcode, name, section, class, date, in_time, out_time, status FROM attendance"
+                + where_sql + " ORDER BY id ASC"
             )
+            cur.execute(sql, params)
             for r in cur.fetchall():
+                # Exclude Class column
                 writer.writerow([
                     r[0] or "",
                     r[1] or "",
-                    r[3] or "",
                     r[4] or "",
                     r[5] or "",
                     (r[6] or "—"),
@@ -427,110 +496,85 @@ def export_excel():
 
 @app.get("/export/pdf")
 def export_pdf():
+    # Use fpdf for portability
     try:
-        from reportlab.lib.pagesizes import A4
-        from reportlab.pdfgen import canvas
-        from reportlab.lib.units import cm
-    except Exception:
+        from fpdf import FPDF
+        import io
+
+        class PDF(FPDF):
+            pass
+
+        pdf = PDF(orientation='P', unit='mm', format='A4')
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.add_page()
+
+        pdf.set_font('Helvetica', 'B', 14)
+        pdf.cell(0, 10, 'Library Attendance Report', ln=1)
+
+        # Info box with selected class/department
+        department_label = (request.args.get("department") or "").strip()
+        display_class = department_label if department_label and department_label.lower() != "all" else "All Classes"
+        x, y = pdf.get_x(), pdf.get_y()
+        pdf.set_font('Helvetica', '', 11)
+        pdf.cell(60, 8, f'Class: {display_class}', border=1, ln=1)
+        pdf.ln(2)
+
+        # Table header (Class removed)
+        headers = ["Roll", "Name", "Date", "In", "Out", "Status"]
+        col_widths = [25, 60, 25, 20, 20, 25]
+        pdf.set_font('Helvetica', 'B', 10)
+        for h, w in zip(headers, col_widths):
+            pdf.cell(w, 7, h, border=1)
+        pdf.ln()
+
+        # Rows
+        pdf.set_font('Helvetica', '', 10)
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            clauses = []
+            params = []
+            department = (request.args.get("department") or "").strip()
+            start_date = (request.args.get("startDate") or "").strip()
+            end_date = (request.args.get("endDate") or "").strip()
+            if department and department.lower() != "all":
+                clauses.append("(LOWER(class) LIKE ? OR LOWER(section) LIKE ?)")
+                like = f"%{department.lower()}%"
+                params.extend([like, like])
+            if start_date:
+                clauses.append("date >= ?")
+                params.append(start_date)
+            if end_date:
+                clauses.append("date <= ?")
+                params.append(end_date)
+            where_sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+            sql = (
+                "SELECT barcode, name, section, class, date, in_time, out_time, status FROM attendance"
+                + where_sql + " ORDER BY id ASC"
+            )
+            cur.execute(sql, params)
+            for r in cur.fetchall():
+                cells = [
+                    str(r[0] or ""), str(r[1] or ""),
+                    str(r[4] or ""), str(r[5] or ""), str(r[6] or "-"), str(r[7] or "")
+                ]
+                for text, w in zip(cells, col_widths):
+                    # truncate long text
+                    txt = text if len(text) <= 32 else text[:31] + '…'
+                    pdf.cell(w, 6, txt, border=1)
+                pdf.ln()
+
+        return send_file(
+            io.BytesIO(pdf.output(dest='S').encode('latin-1')),
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name='attendance.pdf',
+        )
+    except Exception as e:
         return jsonify({
             "success": False,
-            "error": "PDF export not configured. Install reportlab or use CSV export.",
-            "hint": "pip install reportlab"
-        }), 501
-
-    import io
-    buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    width, height = A4
-
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(2*cm, height - 2*cm, "Library Attendance Report")
-    c.setFont("Helvetica", 9)
-
-    # Table layout (Section removed)
-    left_margin = 1.5*cm
-    right_margin = 1.5*cm
-    top_start = height - 3*cm
-    bottom_margin = 2*cm
-    usable_width = width - left_margin - right_margin
-    # Column widths in cm (sum should be <= usable_width)
-    col_widths_cm = [3.0, 7.0, 3.5, 3.0, 2.5, 2.5, 3.0]
-    # Convert to points
-    col_widths = [w*cm for w in col_widths_cm]
-    total_cols_width = sum(col_widths)
-    # If total wider than page, scale down proportionally
-    if total_cols_width > usable_width:
-        scale = usable_width / total_cols_width
-        col_widths = [w*scale for w in col_widths]
-        total_cols_width = sum(col_widths)
-
-    x0 = left_margin
-    y = top_start
-    row_height = 0.65*cm
-
-    headers = ["Roll", "Name", "Class", "Date", "In", "Out", "Status"]
-
-    def draw_row(values, is_header=False):
-        nonlocal y
-        # Draw background for header
-        if is_header:
-            c.setLineWidth(1)
-            c.rect(x0, y - row_height, total_cols_width, row_height, stroke=1, fill=0)
-            c.setFont("Helvetica-Bold", 9)
-        else:
-            c.setLineWidth(0.5)
-            c.rect(x0, y - row_height, total_cols_width, row_height, stroke=1, fill=0)
-            c.setFont("Helvetica", 9)
-
-        # Vertical lines and cell text
-        x = x0
-        for i, (text, cw) in enumerate(zip(values, col_widths)):
-            # Cell box
-            if i > 0:
-                c.line(x, y - row_height, x, y)
-            # Text clipped to cell
-            clip = str(text or "")
-            # Simple clip: reduce until it fits
-            max_chars = int(cw / 5.5)  # heuristic width per char
-            if len(clip) > max_chars:
-                clip = clip[:max_chars-1] + "…"
-            c.drawString(x + 2, y - row_height + 2, clip)
-            x += cw
-
-        y -= row_height
-
-    # Header row
-    draw_row(headers, is_header=True)
-
-    with sqlite3.connect(DB_PATH) as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT barcode, name, section, class, date, in_time, out_time, status FROM attendance ORDER BY id ASC"
-        )
-        for r in cur.fetchall():
-            # omit r[2] Section
-            row = [
-                str(r[0] or ""), str(r[1] or ""), str(r[3] or ""),
-                str(r[4] or ""), str(r[5] or ""), str(r[6] or "—"), str(r[7] or "")
-            ]
-            # New page if needed
-            if y - row_height < bottom_margin:
-                c.showPage()
-                c.setFont("Helvetica", 9)
-                y = top_start
-                draw_row(headers, is_header=True)
-            draw_row(row)
-
-    c.showPage()
-    c.save()
-
-    buffer.seek(0)
-    return send_file(
-        buffer,
-        mimetype="application/pdf",
-        as_attachment=True,
-        download_name="attendance.pdf",
-    )
+            "error": f"PDF export failed: {str(e)}",
+            "hint": "Check server logs for details"
+        }), 500
 
 
 if __name__ == "__main__":
