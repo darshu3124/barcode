@@ -272,7 +272,7 @@ def api_start_scanner():
 
 # --- Admin Login ---
 ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "1234"
+ADMIN_PASSWORD = "1"
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -443,14 +443,42 @@ def export_pdf():
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
 
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(2*cm, height - 2*cm, "Library Attendance Report")
-    c.setFont("Helvetica", 9)
-
-    # Table layout (Section removed)
+    # Margins
     left_margin = 1.5*cm
     right_margin = 1.5*cm
-    top_start = height - 3*cm
+
+    # Header with logo + college title
+    from reportlab.lib.utils import ImageReader
+    import os as _os
+    logo_path = _os.path.join(BASE_DIR, "static", "logo.jpg")
+
+    def draw_header() -> float:
+        top_y = height - 1.2*cm
+        logo_w = 1.8*cm
+        logo_h = 1.8*cm
+        has_logo = _os.path.exists(logo_path)
+        if has_logo:
+            try:
+                c.drawImage(logo_path, left_margin, top_y - logo_h, width=logo_w, height=logo_h, preserveAspectRatio=True, mask='auto')
+            except Exception:
+                has_logo = False
+        text_x = left_margin + (logo_w if has_logo else 0) + 0.5*cm
+        # Title
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(text_x, top_y - 0.2*cm, "Dr. B. B. Hegde First Grade College, Kundapura")
+        # Subtitle
+        c.setFont("Helvetica", 10)
+        c.drawString(text_x, top_y - 0.2*cm - 0.7*cm, "A Unit of Coondapur Education Society (R)")
+        # underline
+        line_y = top_y - logo_h - 0.25*cm
+        c.setLineWidth(0.5)
+        c.line(left_margin, line_y, width - right_margin, line_y)
+        # Optional report title below
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(left_margin, line_y - 0.9*cm, "Library Attendance Report")
+        return line_y - 1.1*cm
+
+    top_start = draw_header()
     bottom_margin = 2*cm
     usable_width = width - left_margin - right_margin
     # Column widths in cm (sum should be <= usable_width)
@@ -517,7 +545,9 @@ def export_pdf():
             if y - row_height < bottom_margin:
                 c.showPage()
                 c.setFont("Helvetica", 9)
-                y = top_start
+                # redraw header on each new page
+                new_top = draw_header()
+                y = new_top
                 draw_row(headers, is_header=True)
             draw_row(row)
 

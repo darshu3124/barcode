@@ -331,12 +331,22 @@
 
     function Filters({ onApply }) {
       const [department, setDepartment] = useState('All');
+      const [mode, setMode] = useState('single'); // 'single' | 'range'
+      const [singleDate, setSingleDate] = useState('');
       const [startDate, setStartDate] = useState('');
       const [endDate, setEndDate] = useState('');
 
+      const handleApply = () => {
+        if (mode === 'single') {
+          onApply({ department, startDate: singleDate, endDate: singleDate });
+        } else {
+          onApply({ department, startDate, endDate });
+        }
+      };
+
       return (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <div className="md:col-span-1">
+        <div className="flex items-end gap-3 flex-wrap md:flex-nowrap md:overflow-visible">
+          <div className="shrink-0 w-56">
             <label className="block text-xs font-medium text-slate-500 mb-1">Class / Department</label>
             <select
               value={department}
@@ -361,27 +371,60 @@
               <option>II B.Com. (D)</option>
             </select>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">Start Date</label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10"
-            />
+          <div className="shrink-0 w-56">
+            <label className="block text-xs font-medium text-slate-500 mb-1">Date Mode</label>
+            <div className="flex rounded-lg border border-slate-200 p-0.5 bg-white shadow-sm">
+              <button
+                type="button"
+                onClick={() => setMode('single')}
+                className={`flex-1 px-3 py-2 text-sm rounded-md transition ${mode === 'single' ? 'bg-brand-600 text-white' : 'text-slate-700 hover:bg-slate-50'}`}
+              >
+                Single Date
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode('range')}
+                className={`flex-1 px-3 py-2 text-sm rounded-md transition ${mode === 'range' ? 'bg-brand-600 text-white' : 'text-slate-700 hover:bg-slate-50'}`}
+              >
+                Range
+              </button>
+            </div>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">End Date</label>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10"
-            />
-          </div>
-          <div className="flex items-end">
+          {mode === 'single' ? (
+            <div className="shrink-0 w-56">
+              <label className="block text-xs font-medium text-slate-500 mb-1">Select Date</label>
+              <input
+                type="date"
+                value={singleDate}
+                onChange={(e) => setSingleDate(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10"
+              />
+            </div>
+          ) : (
+            <>
+              <div className="shrink-0 w-56">
+                <label className="block text-xs font-medium text-slate-500 mb-1">Start Date</label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10"
+                />
+              </div>
+              <div className="shrink-0 w-56">
+                <label className="block text-xs font-medium text-slate-500 mb-1">End Date</label>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10"
+                />
+              </div>
+            </>
+          )}
+          <div className="flex items-end shrink-0 w-56">
             <button
-              onClick={() => onApply({ department, startDate, endDate })}
+              onClick={handleApply}
               className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm ring-1 ring-brand-700 hover:bg-brand-700 transition"
             >
               {/* funnel icon */}
