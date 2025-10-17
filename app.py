@@ -765,8 +765,8 @@ def export_pdf():
     )
 
 
-if __name__ == "__main__":
-    _load_students()
-    init_db()
-    start_barcode_listener_background()
-    socketio.run(app, host="0.0.0.0", port=5001)
+
+_load_students()
+init_db()
+start_barcode_listener_background()
+socketio.run(app, host="0.0.0.0", port=5001)

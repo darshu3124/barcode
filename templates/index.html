@@ -162,7 +162,7 @@
 
       useEffect(() => {
         // Initialize Socket.IO connection
-        const newSocket = io('http://localhost:5000');
+        const newSocket = io('http://localhost:5001');
         setSocket(newSocket);
 
         newSocket.on('connect', () => {
@@ -170,7 +170,7 @@
           setScannerStatus(prev => ({ ...prev, active: true }));
 
           // Automatically start scanner 1 when connected
-          fetch('http://localhost:5000/api/start_scanner', {
+          fetch('http://localhost:5001/api/start_scanner', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ scanner: 'scan1' })
@@ -183,7 +183,7 @@
               } else {
                 console.log('Failed to start scanner:', data.error);
                 // Try scanner 2 as fallback
-                fetch('http://localhost:5000/api/start_scanner', {
+                fetch('http://localhost:5001/api/start_scanner', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ scanner: 'scan2' })
