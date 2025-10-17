@@ -484,6 +484,11 @@
       const [pageSize, setPageSize] = useState(10);
       const [filters, setFilters] = useState({ department: 'All', startDate: '', endDate: '' });
 
+      // Expose filters globally for export buttons outside this component
+      useEffect(() => {
+        window.currentExportFilters = filters;
+      }, [filters]);
+
       const filtered = useMemo(() => {
         return attendanceData.filter((row) => {
           const textMatch = [row.roll, row.name, row.class]
@@ -740,12 +745,32 @@
       URL.revokeObjectURL(url);
     };
 
+    const buildQuery = () => {
+      const f = window.currentExportFilters || { department: 'All', startDate: '', endDate: '' };
+      const params = new URLSearchParams();
+      if (f.department && f.department !== 'All') params.set('department', f.department);
+      if (f.startDate) params.set('startDate', f.startDate);
+      if (f.endDate) params.set('endDate', f.endDate);
+      const qs = params.toString();
+      return qs ? `?${qs}` : '';
+    };
+
     const onExcel = async () => {
       try {
-      const res = await fetch('/export/excel');
+      const res = await fetch('/export/excel' + buildQuery());
         if (!res.ok) throw new Error('Export failed');
         const blob = await res.blob();
-      downloadBlob(blob, 'attendance.xlsx');
+        // Determine filename from headers or content type
+        const dispo = res.headers.get('content-disposition') || '';
+        let filename = 'attendance.xlsx';
+        const match = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(dispo);
+        if (match) {
+          filename = decodeURIComponent(match[1] || match[2]);
+        } else {
+          const ct = (res.headers.get('content-type') || '').toLowerCase();
+          if (ct.includes('text/csv')) filename = 'attendance.csv';
+        }
+        downloadBlob(blob, filename);
         setFlash('Excel exported successfully');
         setTimeout(() => setFlash(''), 2500);
       } catch {
@@ -756,10 +781,14 @@
 
     const onPdf = async () => {
       try {
-        const res = await fetch('/export/pdf');
+        const res = await fetch('/export/pdf' + buildQuery());
         if (!res.ok) throw new Error('Export failed');
         const blob = await res.blob();
-        downloadBlob(blob, 'attendance.pdf');
+        const dispo = res.headers.get('content-disposition') || '';
+        let filename = 'attendance.pdf';
+        const match = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(dispo);
+        if (match) filename = decodeURIComponent(match[1] || match[2]);
+        downloadBlob(blob, filename);
         setFlash('PDF exported successfully');
         setTimeout(() => setFlash(''), 2500);
       } catch {
