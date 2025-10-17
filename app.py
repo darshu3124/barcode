@@ -24,6 +24,17 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 BASE_DIR = os.path.dirname(__file__)
 DB_PATH = os.path.join(BASE_DIR, "attendance.db")
 
+# --- Presentation utilities ---
+def _fmt_date_display(date_str: str | None) -> str:
+    try:
+        if not date_str:
+            return ""
+        # Expecting DB format YYYY-MM-DD → display as DD-MM-YYYY
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        return dt.strftime("%d-%m-%Y")
+    except Exception:
+        return date_str or ""
+
 # --- Load students ---
 all_students = {}
 
@@ -197,6 +208,7 @@ def get_attendance():
                 "section": r[2],
                 "class": r[3],
                 "date": r[4],
+                "dateDisplay": _fmt_date_display(r[4]),
                 "inTime": r[5],
                 "outTime": r[6] if r[6] else "—",
                 "status": r[7],
@@ -227,13 +239,16 @@ def on_barcode(barcode_value: str):
     if not barcode_value:
         return
     with sqlite3.connect(DB_PATH) as conn:
-        student = all_students.get(barcode_value.upper()) or {}
+        student = all_students.get(barcode_value.upper())
+        # Only record and show in UI if the student is present in loaded data
+        if not student:
+            return
         student_name = (student.get("name") or "").strip() or None
         section = (student.get("section") or "").strip() or None
         record = determine_in_out(conn, barcode_value, student_name, section)
     payload = {
         "roll_no": barcode_value,
-        "student_name": record.get("name") if student_name else "Student not found",
+        "student_name": record.get("name"),
         "section": section or "—",
         "action": record.get("action"),
         # Prefer outTime only if it's a real timestamp; otherwise use inTime
@@ -433,7 +448,7 @@ def export_excel():
                 if not is_single_class:
                     row.append(r[3] or "")
                 if not is_single_date:
-                    row.append(r[4] or "")
+                    row.append(_fmt_date_display(r[4]) or "")
                 row.extend([
                     r[5] or "",
                     (r[6] or "—"),
@@ -591,9 +606,9 @@ def export_pdf():
         line_y = top_y - logo_h - 0.25*cm
         c.setLineWidth(0.5)
         c.line(left_margin, line_y, width - right_margin, line_y)
-        # Optional report title below
+        # Optional report title below (centered)
         c.setFont("Helvetica-Bold", 12)
-        c.drawString(left_margin, line_y - 0.9*cm, "Library Attendance Report")
+        c.drawCentredString(width / 2, line_y - 0.9*cm, "Library Attendance Report")
         return line_y - 1.1*cm
 
     top_start = draw_header()
@@ -649,11 +664,12 @@ def export_pdf():
 
     # Compute column widths now that we know which headers are present
     if not is_single_class and not is_single_date:
-        col_widths_cm = [3.0, 7.0, 3.5, 3.0, 2.5, 2.5, 3.0]
+        #            Roll  Name  Class Date  In   Out  Status
+        col_widths_cm = [3.0, 7.0, 4.8, 3.0, 2.5, 2.5, 3.0]
     elif is_single_class and not is_single_date:
         col_widths_cm = [3.0, 8.5, 3.5, 2.5, 2.5, 3.0]  # no Class column
     elif not is_single_class and is_single_date:
-        col_widths_cm = [3.0, 8.5, 3.5, 2.5, 2.5, 3.0]  # no Date column
+        col_widths_cm = [3.0, 8.5, 4.8, 2.5, 2.5, 3.0]  # no Date column, wider Class
     else:
         col_widths_cm = [3.0, 10.0, 2.8, 2.8, 3.0]  # no Class, no Date
     col_widths = [w*cm for w in col_widths_cm]
@@ -719,7 +735,7 @@ def export_pdf():
             if not is_single_class:
                 row.append(str(r[3] or ""))
             if not is_single_date:
-                row.append(str(r[4] or ""))
+                row.append(_fmt_date_display(str(r[4] or "")))
             row.extend([
                 str(r[5] or ""), str(r[6] or "—"), str(r[7] or "")
             ])

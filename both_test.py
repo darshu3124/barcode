@@ -166,12 +166,10 @@ def main_listener(callback):
     def custom_print(*args, **kwargs):
         msg = " ".join(str(a) for a in args).strip()
 
-        # Always show debug text in console
-        old_print(*args, **kwargs)
-
-        # ✅ Only process lines that clearly look like scanner data
+        # ✅ If this is a scanner data line ("scanX: <barcode>"), suppress console output
+        # and handle it silently below. Otherwise, print as normal.
         if not msg.startswith(active_scanner + ":"):
-            return
+            return old_print(*args, **kwargs)
 
         # Extract the barcode value (text after the colon)
         barcode_value = msg.split(":", 1)[1].strip()
@@ -185,8 +183,8 @@ def main_listener(callback):
         ):
             return
 
-        # ✅ Forward only proper student IDs to Flask
-        if len(barcode_value) >= 3:  # or use .isdigit() if your barcodes are numeric
+        # ✅ Forward only proper student IDs to Flask (console stays silent for scanner lines)
+        if len(barcode_value) >= 3:
             callback(barcode_value)
 
     # Replace print globally
